@@ -121,6 +121,7 @@ int main(void) {
     load_module("/lib/modules/sd_mod.ko");     /* disco SCSI/SATA → /dev/sdX */
     load_module("/lib/modules/virtio.ko");
     load_module("/lib/modules/virtio_blk.ko"); /* QEMU VirtIO     → /dev/vda */
+    load_module("/lib/modules/fuse.ko");       /* FUSE — para zeros_fuse */
     sleep(2);   /* dar tiempo al kernel para crear los nodos en /dev
                  * 1s era insuficiente en máquinas lentas o con SATA */
 
@@ -205,6 +206,7 @@ int main(void) {
                                 "/sys/src/fs/zeros_mount.c",    "/usr/src/zeros/fs/zeros_mount.c",
                                 "/sys/src/fs/zeros_format.c",   "/usr/src/zeros/fs/zeros_format.c",
                                 "/sys/src/fs/zeros_populate.c", "/usr/src/zeros/fs/zeros_populate.c",
+                                "/sys/src/fs/zeros_fuse.c",     "/usr/src/zeros/fs/zeros_fuse.c",
                                 /* vm */
                                 "/sys/src/vm/init.c",           "/usr/src/zeros/vm/init.c",
                                 "/sys/src/vm/build.sh",         "/usr/src/zeros/vm/build.sh",
@@ -216,6 +218,7 @@ int main(void) {
                                 "/bin/update",                  "/bin/update",
                                 "/bin/upgrade",                 "/bin/upgrade",
                                 "/bin/zeros_shell_update",      "/bin/zeros_shell_update",
+                                "/bin/zeros_fuse",              "/bin/zeros_fuse",
                                 NULL
                             };
                             char *pop_envp[] = { NULL };

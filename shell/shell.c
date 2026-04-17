@@ -91,12 +91,8 @@ static const char *builtins[] = {
  * Devuelve 0 si el montaje fue exitoso, -1 en caso contrario.
  */
 static int fuse_try_mount(const char *img_path) {
-    strncpy(g_fuse_mnt, "/tmp/zeros_mnt_XXXXXX", sizeof(g_fuse_mnt) - 1);
-    if (!mkdtemp(g_fuse_mnt)) {
-        perror("zeros: mkdtemp");
-        g_fuse_mnt[0] = '\0';
-        return -1;
-    }
+    strncpy(g_fuse_mnt, "/disk", sizeof(g_fuse_mnt) - 1);
+    mkdir(g_fuse_mnt, 0755);  /* crea si no existe (en el host) */
 
     char try_same[576], try_fs[576];
     snprintf(try_same, sizeof(try_same), "%s/zeros_fuse",       g_bin_dir);
@@ -105,7 +101,6 @@ static int fuse_try_mount(const char *img_path) {
     g_fuse_pid = fork();
     if (g_fuse_pid < 0) {
         perror("zeros: fork zeros_fuse");
-        rmdir(g_fuse_mnt);
         g_fuse_mnt[0] = '\0';
         return -1;
     }
@@ -175,7 +170,6 @@ static void fuse_umount(void) {
         g_fuse_pid = -1;
     }
 
-    rmdir(g_fuse_mnt);
     g_fuse_mnt[0] = '\0';
 }
 

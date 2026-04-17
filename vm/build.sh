@@ -69,6 +69,21 @@ gcc -Wall -Wextra -std=c11 -static \
     -o "$BUILD_DIR/zeros_shell_update" \
     zeros_shell_update.c
 
+echo "==> Compilando zeros_fuse (dinámico, libfuse3)..."
+cd "$PROJECT/fs"
+if pkg-config fuse3 --exists 2>/dev/null; then
+    FUSE_CFLAGS=$(pkg-config fuse3 --cflags)
+    FUSE_LIBS=$(pkg-config fuse3 --libs)
+    gcc -Wall -Wextra -std=c11 -I. $FUSE_CFLAGS \
+        -o "$BUILD_DIR/zeros_fuse" \
+        zeros_fuse.c zeros_mount.c \
+        $FUSE_LIBS
+    echo "    zeros_fuse compilado."
+else
+    echo "  ERROR: libfuse3-dev no encontrado. Ejecuta: sudo apt-get install -y libfuse3-dev"
+    exit 1
+fi
+
 echo "==> Copiando binario de la shell al repo para distribución..."
 mkdir -p "$PROJECT/bin"
 cp "$BUILD_DIR/zeros" "$PROJECT/bin/zeros"
@@ -97,7 +112,7 @@ echo "    Usando: $BUSYBOX_BIN"
 
 echo "==> Construyendo initramfs en $INITRAMFS..."
 rm -rf "$INITRAMFS"
-mkdir -p "$INITRAMFS"/{bin,dev,proc,sys,tmp,usr/include}
+mkdir -p "$INITRAMFS"/{bin,dev,proc,sys,tmp,disk,usr/include}
 
 cp "$BUILD_DIR/init"            "$INITRAMFS/init"
 cp "$BUILD_DIR/zeros"           "$INITRAMFS/bin/zeros"
@@ -106,6 +121,7 @@ cp "$BUILD_DIR/zeros_populate"  "$INITRAMFS/bin/zeros_populate"
 cp "$BUILD_DIR/update"             "$INITRAMFS/bin/update"
 cp "$BUILD_DIR/upgrade"            "$INITRAMFS/bin/upgrade"
 cp "$BUILD_DIR/zeros_shell_update" "$INITRAMFS/bin/zeros_shell_update"
+cp "$BUILD_DIR/zeros_fuse"         "$INITRAMFS/bin/zeros_fuse"
 cp "$BUSYBOX_BIN"                  "$INITRAMFS/bin/busybox"
 
 chmod +x "$INITRAMFS/init"
@@ -115,6 +131,7 @@ chmod +x "$INITRAMFS/bin/zeros_populate"
 chmod +x "$INITRAMFS/bin/update"
 chmod +x "$INITRAMFS/bin/upgrade"
 chmod +x "$INITRAMFS/bin/zeros_shell_update"
+chmod +x "$INITRAMFS/bin/zeros_fuse"
 chmod +x "$INITRAMFS/bin/busybox"
 
 echo "==> Incluyendo fuentes del sistema en initramfs..."
@@ -133,6 +150,7 @@ cp "$PROJECT/fs/zeros_mount.h"     "$INITRAMFS/usr/src/zeros/fs/"
 cp "$PROJECT/fs/zeros_mount.c"     "$INITRAMFS/usr/src/zeros/fs/"
 cp "$PROJECT/fs/zeros_format.c"    "$INITRAMFS/usr/src/zeros/fs/"
 cp "$PROJECT/fs/zeros_populate.c"  "$INITRAMFS/usr/src/zeros/fs/"
+cp "$PROJECT/fs/zeros_fuse.c"      "$INITRAMFS/usr/src/zeros/fs/"
 cp "$PROJECT/vm/init.c"            "$INITRAMFS/usr/src/zeros/vm/"
 cp "$PROJECT/vm/build.sh"          "$INITRAMFS/usr/src/zeros/vm/"
 echo "    Fuentes incluidas."
@@ -154,8 +172,8 @@ KVER=$(ls /lib/modules/ | sort -V | tail -1)
 KMOD="/lib/modules/$KVER"
 mkdir -p "$INITRAMFS/lib/modules"
 
-# Módulos necesarios: SATA (VirtualBox), IDE (VirtualBox), VirtIO (QEMU)
-for name in scsi_mod libata libahci ahci ata_piix sd_mod virtio virtio_blk e1000; do
+# Módulos necesarios: SATA (VirtualBox), IDE (VirtualBox), VirtIO (QEMU), FUSE
+for name in scsi_mod libata libahci ahci ata_piix sd_mod virtio virtio_blk e1000 fuse; do
     # Busca el .ko con cualquier extensión de compresión
     found=$(find "$KMOD" \
         \( -name "${name}.ko" -o -name "${name}.ko.gz" -o -name "${name}.ko.zst" \) \
@@ -188,6 +206,28 @@ ldd "$CURL_BIN" | grep -o '/[^ ]*' | while read -r lib; do
     cp -n "$lib" "$dest_dir/"
 done
 echo "    curl listo: $(du -sh "$INITRAMFS/bin/curl" | cut -f1)"
+
+echo "==> Añadiendo zeros_fuse y FUSE runtime..."
+# fusermount3: necesario para que FUSE pueda desmontar el filesystem
+FUSERMOUNT=$(command -v fusermount3 2>/dev/null || command -v fusermount 2>/dev/null || true)
+if [ -n "$FUSERMOUNT" ]; then
+    cp "$FUSERMOUNT" "$INITRAMFS/bin/$(basename "$FUSERMOUNT")"
+    chmod +x "$INITRAMFS/bin/$(basename "$FUSERMOUNT")"
+    # Si fusermount3 tiene setuid en el host, respetar el bit
+    [ -u "$FUSERMOUNT" ] && chmod u+s "$INITRAMFS/bin/$(basename "$FUSERMOUNT")"
+    echo "    $(basename "$FUSERMOUNT") copiado."
+else
+    echo "    Aviso: fusermount3 no encontrado. Instala: sudo apt-get install -y fuse3"
+fi
+# Librerías dinámicas de zeros_fuse (libfuse3.so, libc, etc.)
+echo "    Copiando librerías de zeros_fuse..."
+ldd "$BUILD_DIR/zeros_fuse" | grep -o '/[^ ]*' | while read -r lib; do
+    [ -f "$lib" ] || continue
+    dest_dir="$INITRAMFS$(dirname "$lib")"
+    mkdir -p "$dest_dir"
+    cp -n "$lib" "$dest_dir/"
+done
+echo "    FUSE runtime listo."
 
 echo "==> Añadiendo readline y ncurses (para recompilar la shell con TCC)..."
 # Headers — TCC los necesita para compilar shell.c
