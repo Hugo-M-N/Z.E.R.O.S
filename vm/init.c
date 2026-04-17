@@ -27,6 +27,7 @@
 #include <sys/mount.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 
 /* Detecta qué dispositivo de bloque contiene el disco ZEROS.
  * QEMU virtio  → /dev/vda
@@ -214,6 +215,7 @@ int main(void) {
                                 "/bin/zeros_populate",          "/bin/zeros_populate",
                                 "/bin/zeros_update",            "/bin/zeros_update",
                                 "/bin/zeros_upgrade",           "/bin/zeros_upgrade",
+                                "/bin/zeros_shell_update",      "/bin/zeros_shell_update",
                                 NULL
                             };
                             char *pop_envp[] = { NULL };
@@ -248,30 +250,45 @@ int main(void) {
      * obtiene IP en lugar de quedarse en background, y con -q
      * sale tras obtenerla. Así el arranque no se bloquea si no
      * hay red disponible. */
+    /* ── Configurar red (VirtualBox NAT) ────────────────────
+     *
+     * VirtualBox NAT siempre asigna la misma dirección (10.0.2.15).
+     * Configuramos la interfaz directamente sin depender de DHCP. */
     printf("  Levantando red...\n");
-    {
+    load_module("/lib/modules/e1000.ko");
+
+    static const char *net_cmds[][8] = {
+        { "/bin/busybox", "ifconfig", "eth0", "10.0.2.15",
+          "netmask", "255.255.255.0", "up", NULL },
+        { "/bin/busybox", "route", "add", "default",
+          "gw", "10.0.2.2", NULL },
+        { NULL }
+    };
+
+    int net_ok = 1;
+    for (int c = 0; net_cmds[c][0]; c++) {
         pid_t pid = fork();
         if (pid == 0) {
-            char *dhcp_argv[] = {
-                "/bin/busybox", "udhcpc",
-                "-i", "eth0",   /* interfaz VirtualBox NAT */
-                "-n",           /* no background si falla  */
-                "-q",           /* salir tras obtener IP   */
-                NULL
-            };
-            char *dhcp_envp[] = { NULL };
-            execve("/bin/busybox", dhcp_argv, dhcp_envp);
+            char *envp[] = { NULL };
+            execve(net_cmds[c][0], (char **)net_cmds[c], envp);
             _exit(1);
         }
         if (pid > 0) {
-            int net_st;
-            waitpid(pid, &net_st, 0);
-            if (net_st == 0)
-                printf("  Red lista.\n");
-            else
-                printf("  Sin red (continúa sin ella).\n");
+            int st;
+            waitpid(pid, &st, 0);
+            if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) net_ok = 0;
         }
     }
+
+    /* DNS — 10.0.2.3 es el proxy NAT de VirtualBox, 8.8.8.8 como fallback */
+    FILE *resolv = fopen("/etc/resolv.conf", "w");
+    if (resolv) {
+        fprintf(resolv, "nameserver 10.0.2.3\n");
+        fprintf(resolv, "nameserver 8.8.8.8\n");
+        fclose(resolv);
+    }
+
+    printf("  Red %s.\n", net_ok ? "lista (10.0.2.15)" : "con errores");
 
     printf("  Lanzando shell...\n\n");
 
@@ -292,6 +309,20 @@ int main(void) {
         pid_t pid = fork();
 
         if (pid == 0) {
+            /* Crear nueva sesión: este proceso se convierte en líder de sesión.
+             * Sin setsid(), el kernel no sabe a quién enviar SIGINT al pulsar
+             * Ctrl+C — el carácter se echa en pantalla pero la señal no llega.
+             * Con setsid() + TIOCSCTTY, /dev/tty0 queda como terminal de
+             * control de la sesión y el driver TTY puede enviar señales. */
+            setsid();
+            int tty_fd = open("/dev/tty0", O_RDWR);
+            if (tty_fd >= 0) {
+                ioctl(tty_fd, TIOCSCTTY, 0);
+                dup2(tty_fd, STDIN_FILENO);
+                dup2(tty_fd, STDOUT_FILENO);
+                dup2(tty_fd, STDERR_FILENO);
+                if (tty_fd > STDERR_FILENO) close(tty_fd);
+            }
             /* Proceso hijo: lanzar la shell */
             if (disk_arg[0]) {
                 char *argv[] = { "/bin/zeros", disk_arg, NULL };

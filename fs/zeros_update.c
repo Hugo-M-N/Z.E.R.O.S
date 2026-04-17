@@ -63,24 +63,28 @@ static void read_repo_url(zeros_mount_t *mnt, char *out, size_t sz) {
     free(conf);
 }
 
-/* ── Descargar una URL a un archivo del host con wget ───*/
+/* ── Descargar una URL a un archivo del host con curl ───*/
 static int wget(const char *url, const char *out_path) {
     unlink(out_path);
     pid_t pid = fork();
     if (pid == 0) {
-        int dn = open("/dev/null", O_WRONLY);
-        if (dn >= 0) { dup2(dn, STDOUT_FILENO); dup2(dn, STDERR_FILENO); close(dn); }
+        /* Sin -s: curl muestra errores y progreso en stderr */
         char *argv[] = {
-            "/bin/busybox", "wget", "-O", (char *)out_path, (char *)url, NULL
+            "/bin/curl", "-Lf", "--show-error",
+            "-o", (char *)out_path, (char *)url, NULL
         };
-        char *envp[] = { NULL };
-        execve("/bin/busybox", argv, envp);
+        char *envp[] = { "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt", NULL };
+        execve("/bin/curl", argv, envp);
+        perror("zeros_update: no se pudo ejecutar /bin/curl");
         _exit(1);
     }
     if (pid < 0) return -1;
     int st;
     waitpid(pid, &st, 0);
-    return (WIFEXITED(st) && WEXITSTATUS(st) == 0) ? 0 : -1;
+    int code = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+    if (code != 0)
+        fprintf(stderr, "  curl salió con código %d\n", code);
+    return (code == 0) ? 0 : -1;
 }
 
 /* ── Copiar archivo del host al VFS ─────────────────────*/

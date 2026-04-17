@@ -13,5 +13,7 @@ fs/zeros_format.c
 fs/zeros_populate.c
 fs/zeros_update.c
 fs/zeros_upgrade.c
+fs/zeros_shell_update.c
 vm/init.c
 vm/build.sh
+bin/zeros

@@ -63,6 +63,17 @@ gcc -Wall -Wextra -std=c11 -static \
     -o "$BUILD_DIR/zeros_upgrade" \
     zeros_upgrade.c zeros_mount.c
 
+echo "==> Compilando zeros_shell_update (estático)..."
+cd "$PROJECT/fs"
+gcc -Wall -Wextra -std=c11 -static \
+    -o "$BUILD_DIR/zeros_shell_update" \
+    zeros_shell_update.c
+
+echo "==> Copiando binario de la shell al repo para distribución..."
+mkdir -p "$PROJECT/bin"
+cp "$BUILD_DIR/zeros" "$PROJECT/bin/zeros"
+echo "    $PROJECT/bin/zeros actualizado — haz commit+push para distribuirlo."
+
 echo "==> Preparando disco ZEROS..."
 cd "$PROJECT/fs"
 if [ ! -f "$SCRIPT_DIR/disk.img" ]; then
@@ -92,9 +103,10 @@ cp "$BUILD_DIR/init"            "$INITRAMFS/init"
 cp "$BUILD_DIR/zeros"           "$INITRAMFS/bin/zeros"
 cp "$BUILD_DIR/zeros_format"    "$INITRAMFS/bin/zeros_format"
 cp "$BUILD_DIR/zeros_populate"  "$INITRAMFS/bin/zeros_populate"
-cp "$BUILD_DIR/zeros_update"    "$INITRAMFS/bin/zeros_update"
-cp "$BUILD_DIR/zeros_upgrade"   "$INITRAMFS/bin/zeros_upgrade"
-cp "$BUSYBOX_BIN"               "$INITRAMFS/bin/busybox"
+cp "$BUILD_DIR/zeros_update"       "$INITRAMFS/bin/zeros_update"
+cp "$BUILD_DIR/zeros_upgrade"      "$INITRAMFS/bin/zeros_upgrade"
+cp "$BUILD_DIR/zeros_shell_update" "$INITRAMFS/bin/zeros_shell_update"
+cp "$BUSYBOX_BIN"                  "$INITRAMFS/bin/busybox"
 
 chmod +x "$INITRAMFS/init"
 chmod +x "$INITRAMFS/bin/zeros"
@@ -102,6 +114,7 @@ chmod +x "$INITRAMFS/bin/zeros_format"
 chmod +x "$INITRAMFS/bin/zeros_populate"
 chmod +x "$INITRAMFS/bin/zeros_update"
 chmod +x "$INITRAMFS/bin/zeros_upgrade"
+chmod +x "$INITRAMFS/bin/zeros_shell_update"
 chmod +x "$INITRAMFS/bin/busybox"
 
 echo "==> Incluyendo fuentes del sistema en initramfs..."
@@ -127,7 +140,8 @@ echo "    Fuentes incluidas."
 echo "==> Creando symlinks de BusyBox..."
 for tool in sh ash make find grep sed awk cut sort uniq \
             head tail wc diff cp mv ln chmod echo printf \
-            sleep true false test uname dmesg loadkmap; do
+            sleep true false test uname dmesg loadkmap \
+            ifconfig route ping wget; do
     if "$BUSYBOX_BIN" --list 2>/dev/null | grep -qx "$tool"; then
         ln -sf /bin/busybox "$INITRAMFS/bin/$tool"
     fi
@@ -141,7 +155,7 @@ KMOD="/lib/modules/$KVER"
 mkdir -p "$INITRAMFS/lib/modules"
 
 # Módulos necesarios: SATA (VirtualBox), IDE (VirtualBox), VirtIO (QEMU)
-for name in scsi_mod libata libahci ahci ata_piix sd_mod virtio virtio_blk; do
+for name in scsi_mod libata libahci ahci ata_piix sd_mod virtio virtio_blk e1000; do
     # Busca el .ko con cualquier extensión de compresión
     found=$(find "$KMOD" \
         \( -name "${name}.ko" -o -name "${name}.ko.gz" -o -name "${name}.ko.zst" \) \
@@ -158,6 +172,85 @@ for name in scsi_mod libata libahci ahci ata_piix sd_mod virtio virtio_blk; do
     esac
     echo "    $name ($(du -sh "$INITRAMFS/lib/modules/${name}.ko" | cut -f1))"
 done
+
+echo "==> Añadiendo curl (descargas HTTPS)..."
+CURL_BIN=$(command -v curl 2>/dev/null || true)
+if [ -z "$CURL_BIN" ]; then
+    echo "  ERROR: curl no encontrado. Ejecuta: sudo apt-get install -y curl"
+    exit 1
+fi
+cp "$CURL_BIN" "$INITRAMFS/bin/curl"
+chmod +x "$INITRAMFS/bin/curl"
+ldd "$CURL_BIN" | grep -o '/[^ ]*' | while read -r lib; do
+    [ -f "$lib" ] || continue
+    dest_dir="$INITRAMFS$(dirname "$lib")"
+    mkdir -p "$dest_dir"
+    cp -n "$lib" "$dest_dir/"
+done
+echo "    curl listo: $(du -sh "$INITRAMFS/bin/curl" | cut -f1)"
+
+echo "==> Añadiendo readline y ncurses (para recompilar la shell con TCC)..."
+# Headers — TCC los necesita para compilar shell.c
+[ -d /usr/include/readline ] && cp -r /usr/include/readline "$INITRAMFS/usr/include/"
+for h in ncurses.h curses.h term.h termcap.h; do
+    [ -f "/usr/include/$h" ] && cp "/usr/include/$h" "$INITRAMFS/usr/include/"
+done
+[ -d /usr/include/ncursesw ] && cp -r /usr/include/ncursesw "$INITRAMFS/usr/include/"
+
+# Librerías estáticas — TCC compila con -static, necesita .a no .so
+SYSLIB="$INITRAMFS/usr/lib/x86_64-linux-gnu"
+mkdir -p "$SYSLIB"
+missing_static=""
+for libname in readline ncurses tinfo; do
+    found=""
+    for dir in /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib; do
+        [ -f "$dir/lib${libname}.a" ] && { found="$dir/lib${libname}.a"; break; }
+    done
+    if [ -n "$found" ]; then
+        cp -n "$found" "$SYSLIB/"
+        echo "    lib${libname}.a: $(du -sh "$found" | cut -f1)"
+    else
+        missing_static="$missing_static lib${libname}-dev"
+    fi
+done
+if [ -n "$missing_static" ]; then
+    echo "    Aviso: faltan libs estáticas. Instala con:"
+    echo "    sudo apt-get install -y${missing_static}"
+fi
+echo "    readline y ncurses listos."
+
+echo "==> Copiando certificados CA (HTTPS)..."
+mkdir -p "$INITRAMFS/etc/ssl/certs"
+CA_BUNDLE=""
+for ca in /etc/ssl/certs/ca-certificates.crt \
+          /etc/pki/tls/certs/ca-bundle.crt; do
+    [ -f "$ca" ] && { CA_BUNDLE="$ca"; break; }
+done
+if [ -n "$CA_BUNDLE" ]; then
+    cp "$CA_BUNDLE" "$INITRAMFS/etc/ssl/certs/ca-certificates.crt"
+    echo "    CA bundle: $(du -sh "$INITRAMFS/etc/ssl/certs/ca-certificates.crt" | cut -f1)"
+else
+    echo "    Aviso: no se encontró bundle CA — HTTPS puede fallar"
+fi
+
+echo "==> Creando script DHCP (udhcpc)..."
+mkdir -p "$INITRAMFS/usr/share/udhcpc"
+cat > "$INITRAMFS/usr/share/udhcpc/default.script" << 'EOF'
+#!/bin/sh
+case "$1" in
+    bound|renew)
+        ifconfig $interface $ip netmask $subnet
+        [ -n "$router" ] && route add default gw $router
+        [ -n "$dns"    ] && echo "nameserver $dns" > /etc/resolv.conf
+        ;;
+    deconfig)
+        ifconfig $interface 0.0.0.0
+        ;;
+esac
+exit 0
+EOF
+chmod +x "$INITRAMFS/usr/share/udhcpc/default.script"
+echo "    Script DHCP listo."
 
 echo "==> Generando mapa de teclado español..."
 mkdir -p "$INITRAMFS/etc"
@@ -202,6 +295,11 @@ if [ -z "$MUSL_INC" ] || [ -z "$MUSL_LIB" ]; then
 fi
 mkdir -p "$INITRAMFS/usr/lib/musl/include"
 cp -r "$MUSL_INC/." "$INITRAMFS/usr/lib/musl/include/"
+# TCC calcula su include dir como ../lib/tcc/include relativo a su binario.
+# Como está en /bin/tcc busca /lib/tcc/include, no /usr/lib/tcc/include.
+# Copiar musl headers a /usr/include (path estándar que TCC siempre busca)
+# garantiza que stdio.h se encuentre independientemente de la ubicación de TCC.
+cp -r "$MUSL_INC/." "$INITRAMFS/usr/include/"
 
 TCC_SYSLIB="$INITRAMFS/usr/lib/x86_64-linux-gnu"
 mkdir -p "$TCC_SYSLIB/tcc"
@@ -261,7 +359,7 @@ LABEL zeros
   MENU LABEL Z.E.R.O.S
   LINUX /boot/vmlinuz
   INITRD /boot/initramfs.img
-  APPEND console=tty0 quiet
+  APPEND console=tty0 quiet video=1024x768 fbcon=scrollback:128k
 EOF
 
     # Construir ISO

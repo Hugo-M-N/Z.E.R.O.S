@@ -32,7 +32,7 @@
 #define BUILD_PATH  "/sys/src/BUILD"
 #define SRC_PREFIX  "/sys/src"
 #define BIN_PREFIX  "/bin"
-#define TMP_INC     "/tmp/_zeros_inc"
+#define TMP_BUILD   "/tmp/_zeros_build"   /* árbol de fuentes con estructura */
 #define TMP_OUT     "/tmp/_zeros_upgrade_out"
 #define MAX_ARGS    64
 
@@ -73,16 +73,45 @@ static int host_to_vfs(zeros_mount_t *mnt, const char *host_path,
     return r;
 }
 
-/* ── Extraer todos los .h de /sys/src/ a TMP_INC ────────
- *
- * TCC necesita encontrar los headers. Los extraemos a un directorio
- * temporal plano y pasamos -I<TMP_INC> al compilador.
- * Solo buscamos un nivel de profundidad en /sys/src/fs/ y /sys/src/shell/
- */
-static void extract_headers(zeros_mount_t *mnt) {
-    mkdir(TMP_INC, 0755);
+/* ── Crear directorios recursivamente ───────────────────*/
+static void mkdirs(const char *path) {
+    char tmp[256];
+    strncpy(tmp, path, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') { *p = '\0'; mkdir(tmp, 0755); *p = '/'; }
+    }
+    mkdir(tmp, 0755);
+}
 
-    /* Lista de headers conocidos — se amplía con el MANIFEST */
+/* ── Extraer un archivo del VFS manteniendo su ruta ─────
+ *
+ * vfs_path: ruta en el VFS, ej. /sys/src/fs/vfs.h
+ * base:     directorio raíz destino, ej. /tmp/_zeros_build
+ * rel:      ruta relativa dentro del base, ej. fs/vfs.h
+ *
+ * Resultado: base/rel = /tmp/_zeros_build/fs/vfs.h
+ * Los includes relativos como "../fs/vfs.h" desde shell/shell.c
+ * resuelven correctamente porque la estructura de carpetas es idéntica
+ * a la del repositorio.
+ */
+static int extract_to_build(zeros_mount_t *mnt,
+                             const char *vfs_path, const char *rel) {
+    char host_path[256];
+    snprintf(host_path, sizeof(host_path), "%s/%s", TMP_BUILD, rel);
+    /* crear directorio padre */
+    char parent[256];
+    strncpy(parent, host_path, sizeof(parent) - 1);
+    char *slash = strrchr(parent, '/');
+    if (slash) { *slash = '\0'; mkdirs(parent); }
+    return vfs_extract(mnt, vfs_path, host_path);
+}
+
+/* ── Extraer headers al árbol de build ──────────────────*/
+static void extract_headers(zeros_mount_t *mnt) {
+    mkdirs(TMP_BUILD "/fs");
+    mkdirs(TMP_BUILD "/shell");
+
     static const char *headers[] = {
         "/sys/src/fs/zeros_fs.h",
         "/sys/src/fs/zeros_mount.h",
@@ -91,10 +120,8 @@ static void extract_headers(zeros_mount_t *mnt) {
         NULL
     };
     for (int i = 0; headers[i]; i++) {
-        const char *name = strrchr(headers[i], '/') + 1;
-        char dst[256];
-        snprintf(dst, sizeof(dst), "%s/%s", TMP_INC, name);
-        vfs_extract(mnt, headers[i], dst);
+        const char *rel = headers[i] + strlen("/sys/src/");
+        extract_to_build(mnt, headers[i], rel);
     }
 }
 
@@ -107,29 +134,35 @@ static void extract_headers(zeros_mount_t *mnt) {
  */
 static int compile_entry(zeros_mount_t *mnt, char **tokens, int n) {
     char *tcc_argv[MAX_ARGS + 8];
-    char  tmp_srcs[MAX_ARGS][128];
+    char  host_srcs[MAX_ARGS][256];
     int   tcc_argc = 0;
     int   src_idx  = 0;
 
     tcc_argv[tcc_argc++] = "tcc";
-    tcc_argv[tcc_argc++] = "-I" TMP_INC;
+    tcc_argv[tcc_argc++] = "-static";              /* musl, no glibc dinámica */
+    tcc_argv[tcc_argc++] = "-B/usr/lib/x86_64-linux-gnu"; /* crt1.o + libc.a de musl */
+    /* TMP_BUILD mantiene la estructura shell/ fs/ del repo:
+     * shell.c en shell/shell.c puede hacer #include "../fs/vfs.h"
+     * y TCC lo resuelve correctamente porque fs/vfs.h existe en el árbol */
+    tcc_argv[tcc_argc++] = "-I" TMP_BUILD;
+    tcc_argv[tcc_argc++] = "-I/usr/lib/musl/include";
+    tcc_argv[tcc_argc++] = "-I/usr/lib/tcc/include";
 
     for (int i = 1; i < n; i++) {
         if (tokens[i][0] == '-') {
-            /* Flag del compilador — pasar directo */
             tcc_argv[tcc_argc++] = tokens[i];
         } else {
-            /* Fuente .c: extraer del VFS a /tmp y añadir al comando */
+            /* Fuente .c: extraer al árbol de build manteniendo su ruta relativa */
             char vfs_src[256];
             snprintf(vfs_src, sizeof(vfs_src), "%s/%s", SRC_PREFIX, tokens[i]);
-            snprintf(tmp_srcs[src_idx], sizeof(tmp_srcs[src_idx]),
-                     "/tmp/_zeros_src_%d.c", src_idx);
+            snprintf(host_srcs[src_idx], sizeof(host_srcs[src_idx]),
+                     "%s/%s", TMP_BUILD, tokens[i]);
 
-            if (vfs_extract(mnt, vfs_src, tmp_srcs[src_idx]) < 0) {
+            if (extract_to_build(mnt, vfs_src, tokens[i]) < 0) {
                 fprintf(stderr, "    no se pudo extraer '%s'\n", vfs_src);
                 return -1;
             }
-            tcc_argv[tcc_argc++] = tmp_srcs[src_idx];
+            tcc_argv[tcc_argc++] = host_srcs[src_idx];
             src_idx++;
         }
     }
@@ -150,9 +183,6 @@ static int compile_entry(zeros_mount_t *mnt, char **tokens, int n) {
 
     int st;
     waitpid(pid, &st, 0);
-
-    /* Limpiar fuentes temporales */
-    for (int i = 0; i < src_idx; i++) unlink(tmp_srcs[i]);
 
     if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) return -1;
 
@@ -234,5 +264,8 @@ int main(int argc, char *argv[]) {
     zeros_mount_close(mnt);
 
     printf("\nzeros_upgrade: %d compilados, %d errores\n", ok, fail);
+    printf("\n\033[1;33mAviso:\033[0m la shell (zeros) no se recompila aquí — depende de\n");
+    printf("readline/ncurses que son incompatibles con musl dentro de la VM.\n");
+    printf("Para actualizar la shell ejecuta: \033[1mzeros_shell_update\033[0m\n\n");
     return fail ? 1 : 0;
 }

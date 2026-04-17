@@ -179,9 +179,20 @@ static void fuse_umount(void) {
     g_fuse_mnt[0] = '\0';
 }
 
+/* ── PID del proceso externo en ejecución ────────────────
+ *
+ * Cuando hay un hijo corriendo, Ctrl+C le manda SIGINT a él.
+ * Cuando no hay hijo (estamos en el prompt), redibuja la línea.
+ */
+static volatile pid_t g_running_pid = -1;
+
 /* ── Señales ─────────────────────────────────────────────*/
 void handle_sigint(int sig) {
     (void)sig;
+    if (g_running_pid > 0) {
+        kill(g_running_pid, SIGINT);
+        return;
+    }
     printf("\n");
     rl_on_new_line();
     rl_redisplay();
@@ -644,8 +655,10 @@ void run_external(char **args) {
         perror("zeros");
         exit(1);
     }
+    g_running_pid = pid;
     int status;
     waitpid(pid, &status, WUNTRACED);
+    g_running_pid = -1;
 }
 
 /* ── REPL principal ──────────────────────────────────────*/
@@ -660,6 +673,7 @@ int main(int argc, char *argv[]) {
     else strncpy(g_bin_dir, ".", sizeof(g_bin_dir) - 1);
 
     signal(SIGINT, handle_sigint);
+    rl_catch_signals = 0;  /* readline no toca señales — las gestiona la shell */
     rl_attempted_completion_function = zeros_completion;
 
     if (argc == 2) {
