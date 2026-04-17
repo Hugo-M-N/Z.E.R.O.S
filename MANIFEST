@@ -16,4 +16,3 @@ fs/zeros_upgrade.c
 fs/zeros_shell_update.c
 vm/init.c
 vm/build.sh
-bin/zeros

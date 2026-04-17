@@ -580,6 +580,7 @@ static int builtin_cc(char **args) {
     return 1;
 }
 
+
 /* ── Despachador de built-ins ────────────────────────────
  *
  * Devuelve 1 si el comando fue manejado como built-in.

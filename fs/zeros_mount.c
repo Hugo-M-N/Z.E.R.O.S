@@ -867,3 +867,4 @@ int zeros_readdir(zeros_mount_t *mnt, const char *path,
     }
     return 0;
 }
+

@@ -141,7 +141,7 @@ echo "==> Creando symlinks de BusyBox..."
 for tool in sh ash make find grep sed awk cut sort uniq \
             head tail wc diff cp mv ln chmod echo printf \
             sleep true false test uname dmesg loadkmap \
-            ifconfig route ping wget; do
+            ifconfig route ping wget fbset; do
     if "$BUSYBOX_BIN" --list 2>/dev/null | grep -qx "$tool"; then
         ln -sf /bin/busybox "$INITRAMFS/bin/$tool"
     fi
@@ -359,7 +359,7 @@ LABEL zeros
   MENU LABEL Z.E.R.O.S
   LINUX /boot/vmlinuz
   INITRD /boot/initramfs.img
-  APPEND console=tty0 quiet video=1024x768 fbcon=scrollback:128k
+  APPEND console=tty0 quiet vga=0x316 fbcon=scrollback:128k
 EOF
 
     # Construir ISO

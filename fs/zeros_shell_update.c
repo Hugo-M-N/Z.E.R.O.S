@@ -116,6 +116,9 @@ int main(void) {
     fclose(src);
     unlink(TMP_FILE);
 
+    /* Unlink primero: el proceso en ejecución mantiene el inodo viejo,
+     * pero la nueva entrada de directorio apunta al fichero nuevo. */
+    unlink(DEST_BIN);
     FILE *dst = fopen(DEST_BIN, "wb");
     if (!dst) {
         perror("zeros_shell_update: no se pudo escribir en /bin/zeros");
