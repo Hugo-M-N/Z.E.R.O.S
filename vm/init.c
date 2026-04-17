@@ -213,8 +213,8 @@ int main(void) {
                                 "/bin/tcc",                     "/bin/tcc",
                                 "/bin/zeros_format",            "/bin/zeros_format",
                                 "/bin/zeros_populate",          "/bin/zeros_populate",
-                                "/bin/zeros_update",            "/bin/zeros_update",
-                                "/bin/zeros_upgrade",           "/bin/zeros_upgrade",
+                                "/bin/update",                  "/bin/update",
+                                "/bin/upgrade",                 "/bin/upgrade",
                                 "/bin/zeros_shell_update",      "/bin/zeros_shell_update",
                                 NULL
                             };

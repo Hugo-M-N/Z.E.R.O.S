@@ -108,17 +108,34 @@ static int copy_to_vfs(zeros_mount_t *mnt, const char *src, const char *dest) {
     return r;
 }
 
+/* ── Detectar disco ZEROS ───────────────────────────────*/
+static const char *find_zeros_disk(void) {
+    static const char *candidates[] = {
+        "/dev/sda", "/dev/vda", "/dev/hda", "/dev/hdb",
+        "/dev/vdb", "/dev/sdb", "/dev/sdc", NULL
+    };
+    for (int i = 0; candidates[i]; i++) {
+        int fd = open(candidates[i], O_RDONLY);
+        if (fd < 0) continue;
+        uint32_t magic = 0;
+        read(fd, &magic, 4);
+        close(fd);
+        if (magic == 0x5A45524F) return candidates[i];
+    }
+    return NULL;
+}
+
 /* ── Main ────────────────────────────────────────────────*/
-int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "Uso: %s <disco>\n"
-                        "  Ejemplo: %s /dev/sda\n", argv[0], argv[0]);
+int main(void) {
+    const char *disk = find_zeros_disk();
+    if (!disk) {
+        fprintf(stderr, "update: no se encontró ningún disco ZEROS\n");
         return 1;
     }
 
-    zeros_mount_t *mnt = zeros_mount_open(argv[1]);
+    zeros_mount_t *mnt = zeros_mount_open(disk);
     if (!mnt) {
-        fprintf(stderr, "zeros_update: no se puede abrir '%s'\n", argv[1]);
+        fprintf(stderr, "update: no se puede abrir '%s'\n", disk);
         return 1;
     }
 
@@ -182,8 +199,8 @@ int main(int argc, char *argv[]) {
     unlink(TMP_FILE);
     zeros_mount_close(mnt);
 
-    printf("\nzeros_update: %d actualizados, %d errores\n", ok, fail);
+    printf("\nupdate: %d actualizados, %d errores\n", ok, fail);
     if (ok > 0)
-        printf("Ejecuta 'zeros_upgrade %s' para recompilar.\n", argv[1]);
+        printf("Ejecuta 'upgrade' para recompilar.\n");
     return fail ? 1 : 0;
 }

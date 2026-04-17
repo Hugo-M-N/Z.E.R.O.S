@@ -194,17 +194,34 @@ static int compile_entry(zeros_mount_t *mnt, char **tokens, int n) {
     return 0;
 }
 
+/* ── Detectar disco ZEROS ───────────────────────────────*/
+static const char *find_zeros_disk(void) {
+    static const char *candidates[] = {
+        "/dev/sda", "/dev/vda", "/dev/hda", "/dev/hdb",
+        "/dev/vdb", "/dev/sdb", "/dev/sdc", NULL
+    };
+    for (int i = 0; candidates[i]; i++) {
+        int fd = open(candidates[i], O_RDONLY);
+        if (fd < 0) continue;
+        uint32_t magic = 0;
+        read(fd, &magic, 4);
+        close(fd);
+        if (magic == 0x5A45524F) return candidates[i];
+    }
+    return NULL;
+}
+
 /* ── Main ────────────────────────────────────────────────*/
-int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "Uso: %s <disco>\n"
-                        "  Ejemplo: %s /dev/sda\n", argv[0], argv[0]);
+int main(void) {
+    const char *disk = find_zeros_disk();
+    if (!disk) {
+        fprintf(stderr, "upgrade: no se encontró ningún disco ZEROS\n");
         return 1;
     }
 
-    zeros_mount_t *mnt = zeros_mount_open(argv[1]);
+    zeros_mount_t *mnt = zeros_mount_open(disk);
     if (!mnt) {
-        fprintf(stderr, "zeros_upgrade: no se puede abrir '%s'\n", argv[1]);
+        fprintf(stderr, "upgrade: no se puede abrir '%s'\n", disk);
         return 1;
     }
 
@@ -212,9 +229,8 @@ int main(int argc, char *argv[]) {
     uint32_t build_len;
     uint8_t *build_buf = zeros_read_file(mnt, BUILD_PATH, &build_len);
     if (!build_buf) {
-        fprintf(stderr, "zeros_upgrade: no se encuentra %s\n"
-                        "  Ejecuta primero 'zeros_update %s'\n",
-                BUILD_PATH, argv[1]);
+        fprintf(stderr, "upgrade: no se encuentra %s\n"
+                        "  Ejecuta primero 'update'\n", BUILD_PATH);
         zeros_mount_close(mnt);
         return 1;
     }
@@ -263,7 +279,7 @@ int main(int argc, char *argv[]) {
     free(build_buf);
     zeros_mount_close(mnt);
 
-    printf("\nzeros_upgrade: %d compilados, %d errores\n", ok, fail);
+    printf("\nupgrade: %d compilados, %d errores\n", ok, fail);
     printf("\n\033[1;33mAviso:\033[0m la shell (zeros) no se recompila aquí — depende de\n");
     printf("readline/ncurses que son incompatibles con musl dentro de la VM.\n");
     printf("Para actualizar la shell ejecuta: \033[1mzeros_shell_update\033[0m\n\n");

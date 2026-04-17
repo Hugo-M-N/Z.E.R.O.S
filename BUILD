@@ -11,5 +11,5 @@
 
 zeros_format   fs/zeros_format.c
 zeros_populate fs/zeros_populate.c fs/zeros_mount.c
-zeros_update   fs/zeros_update.c fs/zeros_mount.c
-zeros_upgrade  fs/zeros_upgrade.c fs/zeros_mount.c
+update   fs/zeros_update.c fs/zeros_mount.c
+upgrade  fs/zeros_upgrade.c fs/zeros_mount.c

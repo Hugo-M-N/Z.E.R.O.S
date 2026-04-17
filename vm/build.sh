@@ -51,16 +51,16 @@ gcc -Wall -Wextra -std=c11 -static \
     -o "$BUILD_DIR/zeros_populate" \
     zeros_populate.c zeros_mount.c
 
-echo "==> Compilando zeros_update (estático)..."
+echo "==> Compilando update (estático)..."
 cd "$PROJECT/fs"
 gcc -Wall -Wextra -std=c11 -static \
-    -o "$BUILD_DIR/zeros_update" \
+    -o "$BUILD_DIR/update" \
     zeros_update.c zeros_mount.c
 
-echo "==> Compilando zeros_upgrade (estático)..."
+echo "==> Compilando upgrade (estático)..."
 cd "$PROJECT/fs"
 gcc -Wall -Wextra -std=c11 -static \
-    -o "$BUILD_DIR/zeros_upgrade" \
+    -o "$BUILD_DIR/upgrade" \
     zeros_upgrade.c zeros_mount.c
 
 echo "==> Compilando zeros_shell_update (estático)..."
@@ -103,8 +103,8 @@ cp "$BUILD_DIR/init"            "$INITRAMFS/init"
 cp "$BUILD_DIR/zeros"           "$INITRAMFS/bin/zeros"
 cp "$BUILD_DIR/zeros_format"    "$INITRAMFS/bin/zeros_format"
 cp "$BUILD_DIR/zeros_populate"  "$INITRAMFS/bin/zeros_populate"
-cp "$BUILD_DIR/zeros_update"       "$INITRAMFS/bin/zeros_update"
-cp "$BUILD_DIR/zeros_upgrade"      "$INITRAMFS/bin/zeros_upgrade"
+cp "$BUILD_DIR/update"             "$INITRAMFS/bin/update"
+cp "$BUILD_DIR/upgrade"            "$INITRAMFS/bin/upgrade"
 cp "$BUILD_DIR/zeros_shell_update" "$INITRAMFS/bin/zeros_shell_update"
 cp "$BUSYBOX_BIN"                  "$INITRAMFS/bin/busybox"
 
@@ -112,8 +112,8 @@ chmod +x "$INITRAMFS/init"
 chmod +x "$INITRAMFS/bin/zeros"
 chmod +x "$INITRAMFS/bin/zeros_format"
 chmod +x "$INITRAMFS/bin/zeros_populate"
-chmod +x "$INITRAMFS/bin/zeros_update"
-chmod +x "$INITRAMFS/bin/zeros_upgrade"
+chmod +x "$INITRAMFS/bin/update"
+chmod +x "$INITRAMFS/bin/upgrade"
 chmod +x "$INITRAMFS/bin/zeros_shell_update"
 chmod +x "$INITRAMFS/bin/busybox"
 
@@ -307,7 +307,7 @@ for f in crt1.o crti.o crtn.o libc.a; do
     [ -f "$MUSL_LIB/$f" ] && cp "$MUSL_LIB/$f" "$TCC_SYSLIB/"
 done
 LIBTCC1=$(find /usr/lib -name "libtcc1.a" 2>/dev/null | head -1)
-[ -n "$LIBTCC1" ] && cp "$LIBTCC1" "$TCC_SYSLIB/tcc/"
+[ -n "$LIBTCC1" ] && cp "$LIBTCC1" "$TCC_SYSLIB/"
 echo "    musl incluido: $(du -sh "$INITRAMFS/usr/lib/musl" | cut -f1)"
 
 echo "==> Empaquetando initramfs.img..."
