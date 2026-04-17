@@ -33,9 +33,9 @@
 #include <sys/stat.h>   /* fstat, S_ISBLK */
 #include <sys/ioctl.h>  /* ioctl */
 #ifdef __linux__
-/* Definido en linux/fs.h, pero ese header no está en musl — lo definimos directamente */
+/* 0x80081272 = _IOR(0x12, 114, size_t) en x86-64 — evita incluir linux/fs.h */
 #ifndef BLKGETSIZE64
-#define BLKGETSIZE64  _IOR(0x12, 114, size_t)
+#define BLKGETSIZE64  0x80081272
 #endif
 #endif
 
