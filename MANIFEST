@@ -1,0 +1,17 @@
+BUILD
+shell/shell.c
+shell/editor.c
+shell/editor.h
+fs/zeros_fs.h
+fs/zeros_mount.h
+fs/zeros_mount.c
+fs/vfs.h
+fs/vfs.c
+fs/vfs_zeros.c
+fs/vfs_host.c
+fs/zeros_format.c
+fs/zeros_populate.c
+fs/zeros_update.c
+fs/zeros_upgrade.c
+vm/init.c
+vm/build.sh

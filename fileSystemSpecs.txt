@@ -1,0 +1,34 @@
+Diseña el sistema de archivos de ZEROS con estas especificaciones:
+
+Parámetros calculados dinámicamente al formatear, nunca hardcodeados:
+- Tamaño de bloque: 1KB
+- Espacio para inodos: 10% del tamaño total del disco
+- El resto del disco: bloques de datos
+- Todos los parámetros se guardan en el superbloque
+
+Estructura del superbloque:
+- Número mágico para identificar el filesystem como ZEROS
+- Tamaño total del disco en bloques
+- Total de inodos y bloques
+- Inodos libres y bloques libres
+- Versión del filesystem
+- Timestamps de creación y último montaje
+
+Estructura del inodo al estilo ext4:
+- Tamaño del archivo
+- Timestamps: creación, modificación, acceso
+- Permisos y tipo (archivo o directorio)
+- Extents en lugar de punteros directos
+  (cada extent: bloque_inicial + longitud)
+
+Bitmap de bloques libres y bitmap de inodos libres.
+
+Estructura de directorios inicial que zeros_format debe crear:
+/sys/kernel, /sys/boot, /sys/model/weights, /sys/model/cache
+/bin, /etc, /home
+/dock, /operator/learned, /operator/history
+/log/system, /log/dock
+/tmp, /doc
+
+Empieza solo por zeros_fs.h con todas las estructuras, defines
+y constantes. Sin implementación todavía.

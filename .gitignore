@@ -1,0 +1,28 @@
+# Binarios compilados
+shell/zeros
+shell/zeros_static
+fs/zeros_format
+fs/zeros_fsck
+fs/zeros_fuse
+fs/zeros_update
+fs/zeros_upgrade
+vm/init
+
+# Objetos intermedios
+*.o
+
+# Imágenes de disco
+*.img
+
+# Artefactos de la VM
+vm/kernel.img
+vm/initramfs.img
+vm/zeros.iso
+
+# Credenciales
+token.txt
+
+# Archivos temporales del editor
+*~
+*.swp
+*.swo
