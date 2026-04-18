@@ -19,6 +19,61 @@ OUT_INITRAMFS="$SCRIPT_DIR/initramfs.img"
 OUT_KERNEL="$SCRIPT_DIR/kernel.img"
 OUT_ISO="$SCRIPT_DIR/zeros.iso"
 
+echo "==> Comprobando dependencias del kernel..."
+if ! command -v nasm >/dev/null; then
+    echo "  ERROR: nasm no encontrado. Ejecuta: sudo apt-get install -y nasm"
+    exit 1
+fi
+if ! echo 'int main(){return 0;}' | gcc -m32 -x c - -o /dev/null 2>/dev/null; then
+    echo "  ERROR: gcc-multilib no encontrado. Ejecuta: sudo apt-get install -y gcc-multilib"
+    exit 1
+fi
+
+echo "==> Compilando kernel bare metal (i386, arch/x86)..."
+KARCH="$PROJECT/kernel/arch/x86"
+KROOT="$PROJECT/kernel"
+KCFLAGS="-m32 -ffreestanding -nostdlib -fno-stack-protector -Wall -Wextra"
+
+nasm -f elf32 "$KARCH/boot.s"      -o "$BUILD_DIR/k_boot.o"
+nasm -f elf32 "$KARCH/gdt_flush.s" -o "$BUILD_DIR/k_gdt_flush.o"
+nasm -f elf32 "$KARCH/isr.s"       -o "$BUILD_DIR/k_isr.o"
+
+for src in "$KARCH/console.c" "$KARCH/gdt.c" "$KARCH/idt.c" \
+           "$KARCH/pic.c"     "$KARCH/paging.c" "$KARCH/timer.c" \
+           "$KARCH/pci.c"     "$KARCH/ahci.c" "$KARCH/disk.c" \
+           "$KARCH/keyboard.c" "$KARCH/input.c" "$KARCH/arch.c" \
+           "$KROOT/pmm.c"     "$KROOT/heap.c" "$KROOT/scheduler.c" \
+           "$KROOT/kstring.c" "$KROOT/kzeros.c" "$KROOT/kshell.c" "$KROOT/kernel.c"; do
+    base=$(basename "$src" .c)
+    gcc $KCFLAGS -I"$KROOT" -I"$KARCH" -I"$PROJECT/fs" -c "$src" -o "$BUILD_DIR/k_${base}.o"
+done
+
+ld -m elf_i386 -T "$KARCH/kernel.ld" \
+    -o "$BUILD_DIR/zkernel.elf" \
+    "$BUILD_DIR/k_boot.o" \
+    "$BUILD_DIR/k_gdt_flush.o" \
+    "$BUILD_DIR/k_isr.o" \
+    "$BUILD_DIR/k_console.o" \
+    "$BUILD_DIR/k_gdt.o" \
+    "$BUILD_DIR/k_idt.o" \
+    "$BUILD_DIR/k_pic.o" \
+    "$BUILD_DIR/k_paging.o" \
+    "$BUILD_DIR/k_timer.o" \
+    "$BUILD_DIR/k_pci.o" \
+    "$BUILD_DIR/k_ahci.o" \
+    "$BUILD_DIR/k_disk.o" \
+    "$BUILD_DIR/k_keyboard.o" \
+    "$BUILD_DIR/k_input.o" \
+    "$BUILD_DIR/k_arch.o" \
+    "$BUILD_DIR/k_pmm.o" \
+    "$BUILD_DIR/k_heap.o" \
+    "$BUILD_DIR/k_scheduler.o" \
+    "$BUILD_DIR/k_kstring.o" \
+    "$BUILD_DIR/k_kzeros.o" \
+    "$BUILD_DIR/k_kshell.o" \
+    "$BUILD_DIR/k_kernel.o"
+echo "    kernel: $(du -sh "$BUILD_DIR/zkernel.elf" | cut -f1)"
+
 echo "==> Compilando init (estático)..."
 gcc -Wall -Wextra -std=c11 -static \
     -o "$BUILD_DIR/init" \
@@ -376,30 +431,40 @@ else
     rm -rf "$ISO_DIR"
     mkdir -p "$ISO_DIR/boot/syslinux"
 
-    # Kernel e initramfs
-    cp "$OUT_KERNEL"    "$ISO_DIR/boot/vmlinuz"
-    cp "$OUT_INITRAMFS" "$ISO_DIR/boot/initramfs.img"
+    # Kernel Linux e initramfs
+    cp "$OUT_KERNEL"           "$ISO_DIR/boot/vmlinuz"
+    cp "$OUT_INITRAMFS"        "$ISO_DIR/boot/initramfs.img"
+    # Kernel bare metal
+    cp "$BUILD_DIR/zkernel.elf" "$ISO_DIR/boot/zkernel.elf"
 
     # Bootloader syslinux (rutas fijas en Ubuntu)
     ISOLINUX_BIN="/usr/lib/ISOLINUX/isolinux.bin"
     SYSLINUX_DIR="/usr/lib/syslinux/modules/bios"
 
     cp "$ISOLINUX_BIN" "$ISO_DIR/boot/syslinux/"
-    for mod in ldlinux.c32 libcom32.c32 libutil.c32 menu.c32; do
+    for mod in ldlinux.c32 libcom32.c32 libutil.c32 menu.c32 mboot.c32; do
         [ -f "$SYSLINUX_DIR/$mod" ] && cp "$SYSLINUX_DIR/$mod" "$ISO_DIR/boot/syslinux/"
     done
 
-    # Configuración del bootloader
+    # Configuración del bootloader — menú con dos entradas
     cat > "$ISO_DIR/boot/syslinux/syslinux.cfg" << 'EOF'
+UI menu.c32
 DEFAULT zeros
 PROMPT 0
-TIMEOUT 10
+TIMEOUT 50
+
+MENU TITLE Z.E.R.O.S Boot Menu
 
 LABEL zeros
-  MENU LABEL Z.E.R.O.S
+  MENU LABEL Z.E.R.O.S (Linux + FUSE)
   LINUX /boot/vmlinuz
   INITRD /boot/initramfs.img
   APPEND console=tty0 quiet vga=0x316 fbcon=scrollback:128k
+
+LABEL kernel
+  MENU LABEL Z.E.R.O.S Kernel (bare metal)
+  KERNEL /boot/syslinux/mboot.c32
+  APPEND /boot/zkernel.elf
 EOF
 
     # Construir ISO
@@ -430,6 +495,6 @@ echo "==> VirtualBox — configuración de la VM:"
 echo "    1. Nueva VM: Linux 64-bit, 256 MB RAM, sin disco duro"
 echo "    2. Almacenamiento → Controlador IDE → añadir zeros.iso como CD"
 echo "    3. Almacenamiento → Controlador SATA → añadir disco existente → disk.img"
-echo "       (Tipo: VirtIO, formato: RAW — usa 'VBoxManage convertfromraw' si pide VDI)"
+echo "       (Tipo: AHCI/Normal — NO VirtIO — formato: RAW)"
 echo "    4. Sistema → Orden de arranque: CD primero"
 echo ""
