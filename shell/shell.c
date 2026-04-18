@@ -376,7 +376,7 @@ int builtin_help(char **args) {
     printf("  rm    <path>          Elimina archivo o dir vacío\n");
     printf("  stat  <path>          Info del archivo\n");
     printf("  edit  <path>          Abre el editor de texto\n");
-    if (!g_vfs->is_host)
+    if (!g_vfs->is_host || g_fuse_mnt[0])
         printf("  cc    <path.c> [-o s] Compila un archivo C con TCC\n");
     printf("\n");
     return 1;
@@ -452,7 +452,7 @@ static int builtin_edit(char **args) {
  * y puedan ejecutarse y modificarse desde el propio sistema.
  */
 static int builtin_cc(char **args) {
-    if (g_vfs->is_host) return 0;  /* en modo host: usar el cc del sistema */
+    if (g_vfs->is_host && !g_fuse_mnt[0]) return 0;  /* host puro: usar cc del sistema */
     if (!args[1]) { fprintf(stderr, "uso: cc <archivo.c> [-o <salida>]\n"); return 1; }
 
     uint32_t src_len;
@@ -675,12 +675,18 @@ int main(int argc, char *argv[]) {
         g_vfs = vfs_open_zeros(argv[1]);
         if (!g_vfs) return 1;
 
-        if (fuse_try_mount(argv[1]) == 0)
+        if (fuse_try_mount(argv[1]) == 0) {
             printf("Z.E.R.O.S Shell v0.4 — disco '%s' montado (FUSE en %s)\n",
                    argv[1], g_fuse_mnt);
-        else
+            /* Cambiar al modo POSIX: /disk es un path Linux real.
+             * El VFS interno ya no hace falta — el kernel gestiona el fs. */
+            chdir(g_fuse_mnt);
+            vfs_destroy(g_vfs);
+            g_vfs = vfs_open_host();
+        } else {
             printf("Z.E.R.O.S Shell v0.4 — disco '%s' (sin FUSE, exec via /tmp)\n",
                    argv[1]);
+        }
     } else {
         g_vfs = vfs_open_host();
         if (!g_vfs) return 1;
@@ -689,7 +695,13 @@ int main(int argc, char *argv[]) {
     printf("Escribe 'help' para ayuda\n\n");
 
     while (1) {
-        snprintf(prompt, sizeof(prompt), "ZEROS:%s> ", vfs_pwd(g_vfs));
+        const char *cwd = vfs_pwd(g_vfs);
+        /* En modo FUSE el cwd empieza por /disk — quitarlo para el prompt */
+        if (g_fuse_mnt[0] && strncmp(cwd, g_fuse_mnt, strlen(g_fuse_mnt)) == 0) {
+            cwd += strlen(g_fuse_mnt);
+            if (*cwd == '\0') cwd = "/";
+        }
+        snprintf(prompt, sizeof(prompt), "ZEROS:%s> ", cwd);
 
         char *line = readline(prompt);
         if (line == NULL) { printf("\n"); break; }
