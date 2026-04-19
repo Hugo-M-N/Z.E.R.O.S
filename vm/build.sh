@@ -15,6 +15,14 @@ PROJECT="$SCRIPT_DIR/.."
 BUILD_DIR="/tmp/zeros_vm_build"
 INITRAMFS="$BUILD_DIR/initramfs"
 
+mkdir -p "$BUILD_DIR"
+# Borrar binarios compilados para forzar recompilación limpia
+rm -f "$BUILD_DIR"/k_*.o "$BUILD_DIR"/zkernel.elf \
+      "$BUILD_DIR/zeros_format" "$BUILD_DIR/zeros_populate" \
+      "$BUILD_DIR/update" "$BUILD_DIR/upgrade" \
+      "$BUILD_DIR/zeros_shell_update" "$BUILD_DIR/zeros_fuse" \
+      "$BUILD_DIR/zeros" "$BUILD_DIR/init"
+
 OUT_INITRAMFS="$SCRIPT_DIR/initramfs.img"
 OUT_KERNEL="$SCRIPT_DIR/kernel.img"
 OUT_ISO="$SCRIPT_DIR/zeros.iso"
@@ -148,7 +156,7 @@ echo "==> Preparando disco ZEROS..."
 cd "$PROJECT/fs"
 if [ ! -f "$SCRIPT_DIR/disk.img" ]; then
     echo "    Primera vez — formateando disco nuevo (8 MB)..."
-    ./zeros_format "$SCRIPT_DIR/disk.img" 8M
+    "$BUILD_DIR/zeros_format" "$SCRIPT_DIR/disk.img" 8M
 else
     echo "    Disco existente conservado (los datos persisten)."
 fi

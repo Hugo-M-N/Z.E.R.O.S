@@ -19,8 +19,6 @@
 
 struct kzeros_mount {
     zeros_superblock  sb;
-    unsigned char    *inode_bitmap;
-    unsigned char    *block_bitmap;
     unsigned int      cwd_ino;
     char              cwd_path[1024];
 };
@@ -77,34 +75,61 @@ static void bm_clear(unsigned char *bm, unsigned int bit) {
 }
 
 static unsigned int alloc_inode(kzeros_mount_t *mnt) {
-    for (unsigned int i = 0; i < mnt->sb.total_inodes; i++) {
-        if (!bm_test(mnt->inode_bitmap, i)) {
-            bm_set(mnt->inode_bitmap, i);
-            mnt->sb.free_inodes--;
-            return i;
+    unsigned char buf[ZEROS_BLOCK_SIZE];
+    for (unsigned int b = 0; b < mnt->sb.inode_bitmap_blocks; b++) {
+        if (read_block(mnt->sb.inode_bitmap_start + b, buf) < 0) return (unsigned int)-1;
+        unsigned int base = b * ZEROS_BITS_PER_BLOCK;
+        unsigned int lim  = mnt->sb.total_inodes - base;
+        if (lim > ZEROS_BITS_PER_BLOCK) lim = ZEROS_BITS_PER_BLOCK;
+        for (unsigned int i = 0; i < lim; i++) {
+            if (!bm_test(buf, i)) {
+                bm_set(buf, i);
+                if (write_block(mnt->sb.inode_bitmap_start + b, buf) < 0) return (unsigned int)-1;
+                mnt->sb.free_inodes--;
+                return base + i;
+            }
         }
     }
     return (unsigned int)-1;
 }
 
 static unsigned int alloc_block(kzeros_mount_t *mnt) {
-    for (unsigned int i = mnt->sb.data_start; i < mnt->sb.total_blocks; i++) {
-        if (!bm_test(mnt->block_bitmap, i)) {
-            bm_set(mnt->block_bitmap, i);
-            mnt->sb.free_blocks--;
-            return i;
+    unsigned char buf[ZEROS_BLOCK_SIZE];
+    for (unsigned int b = 0; b < mnt->sb.block_bitmap_blocks; b++) {
+        if (read_block(mnt->sb.block_bitmap_start + b, buf) < 0) return (unsigned int)-1;
+        unsigned int base  = b * ZEROS_BITS_PER_BLOCK;
+        unsigned int start = (mnt->sb.data_start > base) ? mnt->sb.data_start - base : 0;
+        unsigned int lim   = mnt->sb.total_blocks > base ? mnt->sb.total_blocks - base : 0;
+        if (lim > ZEROS_BITS_PER_BLOCK) lim = ZEROS_BITS_PER_BLOCK;
+        for (unsigned int i = start; i < lim; i++) {
+            if (!bm_test(buf, i)) {
+                bm_set(buf, i);
+                if (write_block(mnt->sb.block_bitmap_start + b, buf) < 0) return (unsigned int)-1;
+                mnt->sb.free_blocks--;
+                return base + i;
+            }
         }
     }
     return (unsigned int)-1;
 }
 
 static void free_inode(kzeros_mount_t *mnt, unsigned int ino) {
-    bm_clear(mnt->inode_bitmap, ino);
+    unsigned char buf[ZEROS_BLOCK_SIZE];
+    unsigned int b   = ino / ZEROS_BITS_PER_BLOCK;
+    unsigned int bit = ino % ZEROS_BITS_PER_BLOCK;
+    if (read_block(mnt->sb.inode_bitmap_start + b, buf) < 0) return;
+    bm_clear(buf, bit);
+    write_block(mnt->sb.inode_bitmap_start + b, buf);
     mnt->sb.free_inodes++;
 }
 
 static void free_block(kzeros_mount_t *mnt, unsigned int blk) {
-    bm_clear(mnt->block_bitmap, blk);
+    unsigned char buf[ZEROS_BLOCK_SIZE];
+    unsigned int b   = blk / ZEROS_BITS_PER_BLOCK;
+    unsigned int bit = blk % ZEROS_BITS_PER_BLOCK;
+    if (read_block(mnt->sb.block_bitmap_start + b, buf) < 0) return;
+    bm_clear(buf, bit);
+    write_block(mnt->sb.block_bitmap_start + b, buf);
     mnt->sb.free_blocks++;
 }
 
@@ -260,14 +285,7 @@ static int flush_metadata(kzeros_mount_t *mnt) {
     unsigned char sb_buf[ZEROS_BLOCK_SIZE];
     memset(sb_buf, 0, sizeof(sb_buf));
     memcpy(sb_buf, &mnt->sb, sizeof(mnt->sb));
-    if (write_block(0, sb_buf) < 0) return -1;
-    for (unsigned int i = 0; i < mnt->sb.inode_bitmap_blocks; i++)
-        if (write_block(mnt->sb.inode_bitmap_start + i,
-                        mnt->inode_bitmap + i * ZEROS_BLOCK_SIZE) < 0) return -1;
-    for (unsigned int i = 0; i < mnt->sb.block_bitmap_blocks; i++)
-        if (write_block(mnt->sb.block_bitmap_start + i,
-                        mnt->block_bitmap + i * ZEROS_BLOCK_SIZE) < 0) return -1;
-    return 0;
+    return write_block(0, sb_buf);
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -278,32 +296,14 @@ kzeros_mount_t *kzeros_open(void) {
     kzeros_mount_t *mnt = (kzeros_mount_t *)kmalloc(sizeof(kzeros_mount_t));
     if (!mnt) return 0;
     memset(mnt, 0, sizeof(*mnt));
-
     unsigned char sb_buf[ZEROS_BLOCK_SIZE];
-    if (read_block(0, sb_buf) < 0) { kfree(mnt); return 0; }
+    int rb = read_block(0, sb_buf);
+    if (rb < 0) { kfree(mnt); return 0; }
     memcpy(&mnt->sb, sb_buf, sizeof(mnt->sb));
-
     if (mnt->sb.magic != ZEROS_MAGIC) {
         console_print("  [FS] Magic invalido\n");
         kfree(mnt); return 0;
     }
-
-    unsigned int ibm_bytes = mnt->sb.inode_bitmap_blocks * ZEROS_BLOCK_SIZE;
-    unsigned int bbm_bytes = mnt->sb.block_bitmap_blocks * ZEROS_BLOCK_SIZE;
-    mnt->inode_bitmap = (unsigned char *)kmalloc(ibm_bytes);
-    mnt->block_bitmap = (unsigned char *)kmalloc(bbm_bytes);
-    if (!mnt->inode_bitmap || !mnt->block_bitmap) {
-        kfree(mnt->inode_bitmap); kfree(mnt->block_bitmap);
-        kfree(mnt); return 0;
-    }
-
-    for (unsigned int i = 0; i < mnt->sb.inode_bitmap_blocks; i++)
-        read_block(mnt->sb.inode_bitmap_start + i,
-                   mnt->inode_bitmap + i * ZEROS_BLOCK_SIZE);
-    for (unsigned int i = 0; i < mnt->sb.block_bitmap_blocks; i++)
-        read_block(mnt->sb.block_bitmap_start + i,
-                   mnt->block_bitmap + i * ZEROS_BLOCK_SIZE);
-
     mnt->cwd_ino = ZEROS_ROOT_INODE;
     memcpy(mnt->cwd_path, "/", 2);
     return mnt;
@@ -312,8 +312,6 @@ kzeros_mount_t *kzeros_open(void) {
 void kzeros_close(kzeros_mount_t *mnt) {
     if (!mnt) return;
     flush_metadata(mnt);
-    kfree(mnt->inode_bitmap);
-    kfree(mnt->block_bitmap);
     kfree(mnt);
 }
 
@@ -330,6 +328,8 @@ int kzeros_cd(kzeros_mount_t *mnt, const char *path) {
     if (target[0] == '/') {
         k_strncpy(mnt->cwd_path, target, sizeof(mnt->cwd_path) - 1);
         mnt->cwd_path[sizeof(mnt->cwd_path) - 1] = '\0';
+    } else if (k_strcmp(target, ".") == 0) {
+        /* no-op */
     } else if (k_strcmp(target, "..") == 0) {
         char *slash = (char *)k_strrchr(mnt->cwd_path, '/');
         if (slash && slash != mnt->cwd_path) *slash = '\0';

@@ -51,8 +51,12 @@ static struct block_hdr *heap_grow(void) {
     while (cur->next) cur = cur->next;
 
     if (cur->free) {
-        cur->size += HDR_SIZE + blk->size;
-        return cur;
+        /* Solo fusionar si las páginas son físicamente contiguas */
+        unsigned char *cur_end = (unsigned char *)cur + HDR_SIZE + cur->size;
+        if (cur_end == (unsigned char *)blk) {
+            cur->size += HDR_SIZE + blk->size;
+            return cur;
+        }
     }
     cur->next = blk;
     return blk;

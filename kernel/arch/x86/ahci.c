@@ -253,16 +253,16 @@ static int do_rw(unsigned int lba, void *buf, int write) {
     for (int i = 0; i < 2000000; i++) {
         if (!(g_port->ci & 1)) { done = 1; break; }
     }
-    __asm__ volatile("sti");
 
-    if (!done)                       return -1;  /* timeout */
-    if (g_port->is & (1u << 30))     return -1;  /* Task File Error */
+    if (!done) {
+        __asm__ volatile("sti");
+        return -1;
+    }
+    if (g_port->is & (1u << 30)) {
+        __asm__ volatile("sti");
+        return -1;
+    }
 
-    /* En VirtualBox el DMA lo realiza el host sin pasar por el bus de
-     * coherencia de caché del guest.  Invalidamos las líneas del buffer
-     * para forzar que la siguiente lectura vaya a RAM y vea los datos
-     * que el DMA acaba de escribir.  En hardware real CLFLUSH es un no-op
-     * si la línea ya está invalidada por el memory controller. */
     if (!write) {
         unsigned char *p = (unsigned char *)buf;
         for (unsigned int i = 0; i < 512; i += 64)
@@ -270,6 +270,7 @@ static int do_rw(unsigned int lba, void *buf, int write) {
         __asm__ volatile("mfence" : : : "memory");
     }
 
+    __asm__ volatile("sti");
     return 0;
 }
 
